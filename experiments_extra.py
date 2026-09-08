@@ -1,5 +1,5 @@
 """
-Two experiments requested for the paper:
+Two extra experiments:
 
 (A) STATIC SEGMENT TREE baseline for the range queries, using the SAME summary
     monoid as FADE (fade.combine), so the comparison is semantics-identical.
@@ -14,7 +14,7 @@ Two experiments requested for the paper:
 import bisect, math, random, time
 import fade
 from fade import Elem, combine, IDENT, Fade
-from benchmark_fade import construir, altura
+from benchmark_fade import build_events, tree_height
 
 SIZES = [1000, 3000, 10000, 30000, 100000]
 
@@ -53,10 +53,10 @@ class SegTree:
             return IDENT
         return self._query_pos(lo, hi)
 
-    def peor_tramo(self, a, b):
+    def worst_stretch(self, a, b):
         return self.query(a, b).B
 
-    def agregado_suma(self, a, b):
+    def aggregate_sum(self, a, b):
         return self.query(a, b).sum
 
 
@@ -78,7 +78,7 @@ def mean_time(fn, reps):
 
 # ---------- correctness of the segment tree vs FADE ----------
 def check_segtree():
-    ev = construir(2000, seed=99)
+    ev = build_events(2000, seed=99)
     tr = Fade()
     for (t, v, w) in ev:
         tr.insert(t, v, w)
@@ -88,8 +88,8 @@ def check_segtree():
     ok = True
     for _ in range(500):
         a = rnd.uniform(ts[0], ts[-1]); b = rnd.uniform(a, ts[-1])
-        if not (math.isclose(st.peor_tramo(a, b), tr.peor_tramo(a, b)) and
-                math.isclose(st.agregado_suma(a, b), tr.agregado(a, b, "suma"))):
+        if not (math.isclose(st.worst_stretch(a, b), tr.worst_stretch(a, b)) and
+                math.isclose(st.aggregate_sum(a, b), tr.aggregate(a, b, "sum"))):
             ok = False; break
     print(f"(A) segment tree matches FADE on 500 random windows: {ok}")
     return ok
@@ -98,7 +98,7 @@ def check_segtree():
 def experiment_segtree():
     print("\n=== (A) STATIC SEGMENT TREE vs FADE (query us, build us/event) ===")
     for n in SIZES:
-        ev = construir(n)
+        ev = build_events(n)
         tr = Fade()
         for (t, v, w) in ev:
             tr.insert(t, v, w)
@@ -111,10 +111,10 @@ def experiment_segtree():
                 for _ in range(64)]
         i = {'v': 0}
         def f_seg():
-            a, b = wins[i['v'] % 64]; i['v'] += 1; st.peor_tramo(a, b)
+            a, b = wins[i['v'] % 64]; i['v'] += 1; st.worst_stretch(a, b)
         j = {'v': 0}
         def f_fade():
-            a, b = wins[j['v'] % 64]; j['v'] += 1; tr.peor_tramo(a, b)
+            a, b = wins[j['v'] % 64]; j['v'] += 1; tr.worst_stretch(a, b)
         reps = 40 * 64
         seg = mean_time(f_seg, reps); fad = mean_time(f_fade, reps)
         print(f"  n={n:>7}: WorstStretch  seg={seg:6.1f}  fade={fad:6.1f} us   "
@@ -125,7 +125,7 @@ def experiment_ablation():
     print("\n=== (B) ABLATION: insertion us/event, FADE vs no-augmentation RB ===")
     print(f"  {'n':>7} | {'FADE':>8} | {'no-aug':>8} | {'aug overhead':>12} | share")
     for n in SIZES:
-        ev = construir(n)
+        ev = build_events(n)
         # FADE (with augmentation)
         tr = Fade()
         t0 = time.perf_counter()

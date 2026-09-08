@@ -1,7 +1,7 @@
-"""Consolidated measurements for the paper (single run, one machine)."""
+"""Consolidated measurements (single run, one machine)."""
 import random, time, math, statistics
 import fade
-from benchmark_fade import BaselineLineal, construir, altura
+from benchmark_fade import LinearBaseline, build_events, tree_height
 
 SIZES = [1000, 3000, 10000, 30000, 100000]
 
@@ -12,12 +12,12 @@ def pct(xs, q):
     return xs[i]
 
 def build_pair(n):
-    ev = construir(n)
+    ev = build_events(n)
     tr = fade.Fade()
     t0 = time.perf_counter()
     for (t,v,w) in ev: tr.insert(t,v,w)
     ins_fade = (time.perf_counter()-t0)/n*1e6
-    ba = BaselineLineal()
+    ba = LinearBaseline()
     t0 = time.perf_counter()
     for (t,v,w) in ev: ba.insert(t,v,w)
     ins_base = (time.perf_counter()-t0)/n*1e6
@@ -38,29 +38,29 @@ for n in SIZES:
     wins = [(lambda a: (a, rnd.uniform(a, tmax)))(rnd.uniform(tmin, tmax)) for _ in range(64)]
     ks = [rnd.randint(1, n) for _ in range(64)]
     i = {'v':0}
-    def fpt():
-        a,b = wins[i['v']%len(wins)]; i['v']+=1; tr.peor_tramo(a,b)
+    def fws():
+        a,b = wins[i['v']%len(wins)]; i['v']+=1; tr.worst_stretch(a,b)
     i2 = {'v':0}
     def fag():
-        a,b = wins[i2['v']%len(wins)]; i2['v']+=1; tr.agregado(a,b,"suma")
+        a,b = wins[i2['v']%len(wins)]; i2['v']+=1; tr.aggregate(a,b,"sum")
     i3 = {'v':0}
     def fsel():
         k = ks[i3['v']%len(ks)]; i3['v']+=1; tr.select(k)
     i4 = {'v':0}
-    def bpt():
-        a,b = wins[i4['v']%len(wins)]; i4['v']+=1; ba.peor_tramo(a,b)
+    def bws():
+        a,b = wins[i4['v']%len(wins)]; i4['v']+=1; ba.worst_stretch(a,b)
     i5 = {'v':0}
     def bag():
-        a,b = wins[i5['v']%len(wins)]; i5['v']+=1; ba.agregado_suma(a,b)
+        a,b = wins[i5['v']%len(wins)]; i5['v']+=1; ba.aggregate_sum(a,b)
     rf = 40*len(wins)
     rb = max(len(wins), (2_000_000//n))*1
-    ptf = mean_time(fpt, rf); agf = mean_time(fag, rf); self_ = mean_time(fsel, rf)
-    ptb = mean_time(bpt, rb); agb = mean_time(bag, rb)
-    h = altura(tr); bound = 2*math.log2(n+1)
-    rows.append((n,h,bound,insf,insb,ptf,ptb,agf,agb,self_,ptb/ptf))
-    plot_ns.append(n); plot_fade.append(ptf); plot_base.append(ptb)
-    print(f"n={n:>7} h={h} bound={bound:.1f} | WS f/b {ptf:.1f}/{ptb:.1f} "
-          f"Agg f/b {agf:.1f}/{agb:.1f} Sel {self_:.2f} | {ptb/ptf:.1f}x | "
+    wsf = mean_time(fws, rf); agf = mean_time(fag, rf); self_ = mean_time(fsel, rf)
+    wsb = mean_time(bws, rb); agb = mean_time(bag, rb)
+    h = tree_height(tr); bound = 2*math.log2(n+1)
+    rows.append((n,h,bound,insf,insb,wsf,wsb,agf,agb,self_,wsb/wsf))
+    plot_ns.append(n); plot_fade.append(wsf); plot_base.append(wsb)
+    print(f"n={n:>7} h={h} bound={bound:.1f} | WS f/b {wsf:.1f}/{wsb:.1f} "
+          f"Agg f/b {agf:.1f}/{agb:.1f} Sel {self_:.2f} | {wsb/wsf:.1f}x | "
           f"ins f/b {insf:.1f}/{insb:.2f}")
 
 print("\n=== TAIL LATENCY of WorstStretch (us): p50/p95/p99 ===")
@@ -74,11 +74,11 @@ for n in [10000, 100000]:
     fs = []
     for _ in range(nf):
         a = rnd.uniform(tmin,tmax); b = rnd.uniform(a,tmax)
-        t0=time.perf_counter(); tr.peor_tramo(a,b); fs.append((time.perf_counter()-t0)*1e6)
+        t0=time.perf_counter(); tr.worst_stretch(a,b); fs.append((time.perf_counter()-t0)*1e6)
     bs = []
     for _ in range(nb):
         a = rnd.uniform(tmin,tmax); b = rnd.uniform(a,tmax)
-        t0=time.perf_counter(); ba.peor_tramo(a,b); bs.append((time.perf_counter()-t0)*1e6)
+        t0=time.perf_counter(); ba.worst_stretch(a,b); bs.append((time.perf_counter()-t0)*1e6)
     tail[n] = (pct(fs,.5),pct(fs,.95),pct(fs,.99),pct(bs,.5),pct(bs,.95),pct(bs,.99))
     print(f"n={n}: FADE p50/p95/p99 = {pct(fs,.5):.1f}/{pct(fs,.95):.1f}/{pct(fs,.99):.1f}"
           f"   base p50/p95/p99 = {pct(bs,.5):.0f}/{pct(bs,.95):.0f}/{pct(bs,.99):.0f}")

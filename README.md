@@ -8,6 +8,10 @@ insert / delete / update.
 
 This repository holds the reference implementation and the scripts that measure it.
 
+> **This version is a full English refactor.** All identifiers, comments, docstrings,
+> and console output were translated from Spanish to English. See
+> [Refactor notes](#refactor-notes-spanish--english) for the exact renames.
+
 ---
 
 ## Files
@@ -38,8 +42,7 @@ python3 fade.py                      # correctness / invariant checks
 ```
 
 Expected: the worked example reports the worst stretch `= 7`, five randomized
-differential runs pass, the height bound holds, and it ends with
-`Todas las comprobaciones pasaron correctamente.`
+differential runs pass, the height bound holds, and it ends with `All checks passed.`
 
 ---
 
@@ -57,8 +60,8 @@ tree = Fade()
 for ts, val, w in [(1,80,-1),(2,55,3),(3,60,-2),(4,90,4),(5,85,2),(6,40,-5),(7,70,1)]:
     tree.insert(float(ts), val, w)
 
-tree.peor_tramo(0.0, 10.0)          # -> 7.0   value of the worst contiguous run in [a,b]
-tree.agregado(2.0, 5.0, "suma")     # -> 290.0 aggregate of metric values in the window
+tree.worst_stretch(0.0, 10.0)       # -> 7.0   value of the worst contiguous run in [a,b]
+tree.aggregate(2.0, 5.0, "sum")     # -> 290.0 aggregate of metric values in the window
 tree.select(3).t                    # -> 3.0   time of the 3rd event in chronological order
 
 tree.update(6.0, 40, 2.0)           # rewrite the event at t=6.0
@@ -73,17 +76,57 @@ Updates (all `O(log n)`):
 - `update(t, val, w) -> bool` — rewrite the event at `t`.
 
 Queries over an inclusive window `[a, b]` (all `O(log n)`):
-- `peor_tramo(a, b) -> float` — value of the maximum-severity contiguous run.
-- `agregado(a, b, op) -> float` — `op` in `"cuenta"`, `"suma"`, `"media"`, `"min"`, `"max"`.
+- `worst_stretch(a, b) -> float` — value of the maximum-severity contiguous run.
+- `aggregate(a, b, op) -> float` — `op` in `"count"`, `"sum"`, `"mean"`, `"min"`, `"max"`.
 - `select(k) -> Node | None` — the `k`-th event in time order (**1-indexed**).
-- `query_range(a, b) -> Elem` — full window summary; fields `tam, sum, mn, mx, W, P, S, B`
+- `query_range(a, b) -> Elem` — full window summary; fields `size, sum, mn, mx, W, P, S, B`
   (count, sum, min, max, and severity total / best prefix / best suffix / best run).
 
 Checks: `check_rb()` (red-black invariants) and `check_augment()` (every stored
 summary equals a fresh recomputation).
 
-> Identifiers and op strings are in Spanish (`peor_tramo`, `agregado`, `"suma"`, ...).
-> `peor_tramo` returns the run's **value**, not its endpoints.
+> `worst_stretch` returns the run's **value**, not its endpoints.
+
+---
+
+## Refactor notes (Spanish → English)
+
+Everything user-facing and internal is now in English. Behavior and results are
+unchanged. Renames:
+
+**Public API (`fade.py`)**
+
+| Before (Spanish) | After (English) |
+|------------------|-----------------|
+| `peor_tramo(a, b)` | `worst_stretch(a, b)` |
+| `agregado(a, b, op)` | `aggregate(a, b, op)` |
+| aggregate ops `"cuenta"` / `"suma"` / `"media"` | `"count"` / `"sum"` / `"mean"` |
+| `Elem` / `Node` field `tam` | `size` |
+| `brute_peor_tramo` | `brute_worst_stretch` |
+| `brute_agregado` | `brute_aggregate` |
+
+**Helpers and other modules**
+
+| Before | After |
+|--------|-------|
+| `BaselineLineal` | `LinearBaseline` |
+| `BaselineLineal.peor_tramo` / `agregado_suma` / `_rango` | `worst_stretch` / `aggregate_sum` / `_range` |
+| `construir(n)` | `build_events(n)` |
+| `altura(tree)` | `tree_height(tree)` |
+| `cronometrar` | `time_per_call` |
+| `guardar_plot` | `save_plot` |
+| `autoevaluacion_correccion` | `check_correctness` |
+| `autoevaluacion_rendimiento` | `benchmark_performance` |
+| `SegTree.peor_tramo` / `agregado_suma` | `worst_stretch` / `aggregate_sum` |
+
+**Unchanged** (already English): `insert`, `delete`, `update`, `select`,
+`query_range`, `check_rb`, `check_augment`, `inorder`, `combine`, `combine3`, and the
+internal red-black methods (`recompute`, `_left_rotate`, `_right_rotate`, `_find`,
+`_minimum`, `_transplant`, `_insert_fixup`, `_delete_fixup`, `_query_prefix`,
+`_query_suffix`).
+
+All comments, docstrings, and console output were translated (for example,
+`"Todas las comprobaciones pasaron correctamente."` → `"All checks passed."`).
 
 ---
 
@@ -116,35 +159,26 @@ Ubuntu 24.04, CPython 3.12, single-threaded). Absolute microseconds carry
 interpreter/host noise; the **scaling** is the claim and is stable across runs.
 
 **Correctness (measured).** All differential tests pass; every stored summary matches
-a fresh recomputation; tree height stays under `2*log2(n+1)` at every size (e.g. 31 vs
-33.2 at n=1e5).
+a fresh recomputation; tree height stays under `2*log2(n+1)` at every size.
 
-**Scaling vs. a linear recompute (measured).** The linear scan models a batch process
-that sweeps the log once per answer. FADE's WorstStretch query grows ~logarithmically
-(~48->92 us from n=1e3 to 1e5) while the baseline grows linearly (~37->3656 us). They
-cross between 1e3 and 3e3 events; at n=1e5 FADE is ~**40x faster** in the mean, and the
-tail gap is larger (p99 ~ **185 us vs 15,420 us**).
+**Scaling vs. a linear recompute (measured).** FADE's WorstStretch query grows
+~logarithmically while the linear baseline grows linearly; they cross between 10^3 and
+3*10^3 events, and at n=10^5 FADE is ~40x faster in the mean, with a larger gap at the
+tail (p99 ~185 us vs 15,420 us).
 
 **Vs. a static segment tree (measured) - honest trade-off.** With the same summary,
-the segment tree answers queries ~**2.3-2.5x faster** than FADE (tighter array layout).
-FADE does **not** win on query speed. Its advantage is dynamism: the segment tree is
-static and rebuilds in `O(n)` (~0.84 s at n=1e5) to admit a new timestamp, whereas FADE
-inserts in `O(log n)` (~0.2 ms). Use FADE for streaming/correcting workloads; use the
-segment tree for a fixed batch.
+the segment tree queries ~2.3-2.5x faster than FADE (tighter array layout); FADE does
+not win on query speed. Its advantage is dynamism: the segment tree rebuilds in O(n)
+(~0.84 s at n=10^5) to admit a new timestamp, whereas FADE inserts in O(log n) (~0.2 ms).
 
-**Augmentation cost (measured ablation).** Plain red-black insertion is only
-2.4-4.9 us/event; maintaining the augmentation is ~**98%** of FADE's insertion time,
-dominated by allocating a summary object per recompute. This is a constant factor
-(consistent with the `O(1)`-per-node analysis), and points to in-place field updates as
-the first optimization.
+**Augmentation cost (measured ablation).** Plain red-black insertion is 2.4-4.9
+us/event; maintaining the augmentation is ~98% of insertion time, dominated by
+allocating a summary object per recompute.
 
-**Memory (measured).** ~**230 bytes/event** (0.23 MB at n=1e3, 23 MB at n=1e5), i.e.
-`Theta(n)` at d=1.
+**Memory (measured).** ~230 bytes/event (Theta(n) at d=1). **Stability:** 95% CIs
+within +/-1-2%.
 
-**Stability (measured).** Repeating the WorstStretch measurement 7x per size gives 95%
-confidence intervals within +/-1.3 us (~1-2%); e.g. 89.8 +/- 0.9 us at n=1e5.
-
-**Complexity (analytical).** `O(log n)` per operation; `Theta(n*d)` space.
+**Complexity (analytical).** O(log n) per operation; Theta(n*d) space.
 
 ---
 
@@ -155,7 +189,6 @@ confidence intervals within +/-1.3 us (~1-2%); e.g. 89.8 +/- 0.9 us at n=1e5.
 - The prototype stores **one** metric per node (d=1); `Theta(n*d)` for larger d is
   analytical.
 - Baselines are a linear scan (model of batch recompute) and a static segment tree; a
-  dynamic segment tree and a Fenwick tree are not evaluated (Fenwick cannot express
-  min/max or the worst segment).
-- `peor_tramo` returns the run's value; endpoint recovery needs extra bookkeeping and
+  dynamic segment tree and a Fenwick tree are not evaluated.
+- `worst_stretch` returns the run's value; endpoint recovery needs extra bookkeeping and
   is not implemented.

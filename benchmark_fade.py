@@ -1,25 +1,24 @@
 """
-Autoevaluacion del funcionamiento de FADE
-==========================================
+FADE self-evaluation
+====================
 
-Este script mide el funcionamiento de los algoritmos de FADE de dos formas:
+This script measures the behavior of FADE's algorithms in two ways:
 
-  (1) CORRECCION. Reejecuta las comprobaciones de fade.py (invariantes
-      rojo-negro + aumentacion, contrastadas contra un oraculo de fuerza bruta).
+  (1) CORRECTNESS. Re-runs fade.py's checks (red-black + augmentation
+      invariants, contrasted against a brute-force oracle).
 
-  (2) RENDIMIENTO. Compara el tiempo de ejecucion de las consultas de FADE
-      (O(log n)) frente a una LINEA BASE lineal que recalcula sobre el registro
-      de eventos (O(n) por consulta). Esa linea base modela el metodo que
-      emplea de facto un sistema de reporte por lotes como RAP: segmentar el
-      registro y recorrerlo una vez para producir cada resultado.
+  (2) PERFORMANCE. Compares the running time of FADE's queries (O(log n))
+      against a LINEAR baseline that recomputes over the event log (O(n) per
+      query). That baseline models the method a batch-report system such as RAP
+      uses de facto: segment the log and sweep it once to produce each result.
 
-  Metricas medidas: tiempo por consulta de PeorTramo, Agregado y OrdenPorTiempo;
-  rendimiento de insercion; y altura del arbol frente a la cota 2*log2(n+1).
+  Metrics measured: time per WorstStretch, Aggregate and SelectByTime query;
+  insertion throughput; and tree height against the bound 2*log2(n+1).
 
-Uso:  python3 benchmark_fade.py            # tabla en consola
-      python3 benchmark_fade.py --plot     # ademas guarda benchmark_plot.png
+Usage:  python3 benchmark_fade.py            # table on the console
+        python3 benchmark_fade.py --plot     # also writes benchmark_plot.png
 
-No requiere dependencias externas salvo matplotlib para --plot.
+No external dependencies except matplotlib for --plot.
 """
 
 import argparse
@@ -29,227 +28,226 @@ import random
 import statistics
 import time
 
-import fade  # implementacion de FADE (misma carpeta)
+import fade  # FADE implementation (same folder)
 
 
 # --------------------------------------------------------------------------
-# Linea base lineal (modelo del recalculo por lotes tipo RAP).
+# Linear baseline (model of RAP-style batch recompute).
 # --------------------------------------------------------------------------
-class BaselineLineal:
-    """Mantiene los eventos en un arreglo ordenado por tiempo y responde cada
-    consulta con un recorrido lineal (una sola pasada), como un sistema de
-    reporte por lotes que recalcula sobre el registro completo."""
+class LinearBaseline:
+    """Keeps the events in a time-sorted array and answers each query with a
+    linear pass (single sweep), like a batch-report system that recomputes over
+    the whole log."""
 
     def __init__(self):
-        self.ts = []      # tiempos ordenados
-        self.vals = []    # valores alineados con ts
-        self.ws = []      # pesos de severidad alineados con ts
+        self.ts = []      # sorted times
+        self.vals = []    # values aligned with ts
+        self.ws = []      # severity weights aligned with ts
 
     def insert(self, t, val, w):
         i = bisect.bisect_left(self.ts, t)
-        self.ts.insert(i, t)      # O(n): mantener el arreglo ordenado
+        self.ts.insert(i, t)      # O(n): keep the array sorted
         self.vals.insert(i, val)
         self.ws.insert(i, w)
 
-    def _rango(self, a, b):
+    def _range(self, a, b):
         lo = bisect.bisect_left(self.ts, a)
         hi = bisect.bisect_right(self.ts, b)
         return lo, hi
 
-    def peor_tramo(self, a, b):
-        lo, hi = self._rango(a, b)
-        best = 0.0            # tramo vacio permitido
+    def worst_stretch(self, a, b):
+        lo, hi = self._range(a, b)
+        best = 0.0            # empty stretch allowed
         acc = 0.0
-        for i in range(lo, hi):   # Kadane O(n): una sola pasada
+        for i in range(lo, hi):   # Kadane O(n): a single pass
             acc = max(0.0, acc + self.ws[i])
             if acc > best:
                 best = acc
         return best
 
-    def agregado_suma(self, a, b):
-        lo, hi = self._rango(a, b)
+    def aggregate_sum(self, a, b):
+        lo, hi = self._range(a, b)
         s = 0.0
         for i in range(lo, hi):   # O(n)
             s += self.vals[i]
         return s
 
     def select(self, k):
-        return self.ts[k - 1]     # O(1) tras insertar ordenado en O(n)
+        return self.ts[k - 1]     # O(1) after sorted O(n) insertion
 
 
 # --------------------------------------------------------------------------
-# Utilidades de medicion.
+# Measurement helpers.
 # --------------------------------------------------------------------------
-def cronometrar(funcion, repeticiones):
+def time_per_call(func, repeats):
     t0 = time.perf_counter()
-    for _ in range(repeticiones):
-        funcion()
-    return (time.perf_counter() - t0) / repeticiones
+    for _ in range(repeats):
+        func()
+    return (time.perf_counter() - t0) / repeats
 
 
-def construir(n, seed=7):
+def build_events(n, seed=7):
     rnd = random.Random(seed)
-    # tiempos unicos y crecientes con separacion aleatoria (flujo real)
-    eventos = []
+    # unique, increasing times with random gaps (real stream)
+    events = []
     t = 0.0
     for _ in range(n):
         t += rnd.uniform(0.05, 0.20)
-        val = rnd.uniform(0, 100)          # p. ej. volumen o ritmo
-        w = rnd.uniform(-3, 3)             # severidad
-        eventos.append((t, val, w))
-    return eventos
+        val = rnd.uniform(0, 100)          # e.g. volume or pace
+        w = rnd.uniform(-3, 3)             # severity
+        events.append((t, val, w))
+    return events
 
 
-def altura(arbol):
+def tree_height(tree):
     def h(x):
         if x is None:
             return 0
         return 1 + max(h(x.left), h(x.right))
-    return h(arbol.root)
+    return h(tree.root)
 
 
 # --------------------------------------------------------------------------
-# (1) Correccion.
+# (1) Correctness.
 # --------------------------------------------------------------------------
-def autoevaluacion_correccion():
-    print("== (1) Correccion de los algoritmos ==")
+def check_correctness():
+    print("== (1) Algorithm correctness ==")
     fade.test_worked_example()
     for s in range(5):
         fade.test_random(seed=s)
     fade.test_height_bound()
-    print("   -> Todas las comprobaciones de correccion pasaron.\n")
+    print("   -> All correctness checks passed.\n")
 
 
 # --------------------------------------------------------------------------
-# (2) Rendimiento.
+# (2) Performance.
 # --------------------------------------------------------------------------
-def autoevaluacion_rendimiento(tam=(1000, 3000, 10000, 30000, 100000)):
-    print("== (2) Rendimiento: FADE (O(log n)) vs linea base lineal (O(n)) ==")
-    filas = []
-    for n in tam:
-        eventos = construir(n)
+def benchmark_performance(sizes=(1000, 3000, 10000, 30000, 100000)):
+    print("== (2) Performance: FADE (O(log n)) vs linear baseline (O(n)) ==")
+    rows = []
+    for n in sizes:
+        events = build_events(n)
 
-        # ---- construir ambas estructuras y medir insercion ----
-        arbol = fade.Fade()
+        # ---- build both structures and measure insertion ----
+        tree = fade.Fade()
         t0 = time.perf_counter()
-        for (t, v, w) in eventos:
-            arbol.insert(t, v, w)
-        t_ins_fade = (time.perf_counter() - t0) / n * 1e6   # us/insercion
+        for (t, v, w) in events:
+            tree.insert(t, v, w)
+        t_ins_fade = (time.perf_counter() - t0) / n * 1e6   # us/insertion
 
-        base = BaselineLineal()
+        base = LinearBaseline()
         t0 = time.perf_counter()
-        for (t, v, w) in eventos:
+        for (t, v, w) in events:
             base.insert(t, v, w)
         t_ins_base = (time.perf_counter() - t0) / n * 1e6
 
-        h = altura(arbol)
-        cota = 2 * math.log2(n + 1)
+        h = tree_height(tree)
+        bound = 2 * math.log2(n + 1)
 
-        # ---- preparar consultas aleatorias sobre ventanas [a,b] ----
+        # ---- prepare random queries over windows [a,b] ----
         rnd = random.Random(123)
-        tmin, tmax = eventos[0][0], eventos[-1][0]
-        ventanas = []
+        tmin, tmax = events[0][0], events[-1][0]
+        windows = []
         for _ in range(64):
             a = rnd.uniform(tmin, tmax)
             b = rnd.uniform(a, tmax)
-            ventanas.append((a, b))
+            windows.append((a, b))
         ks = [rnd.randint(1, n) for _ in range(64)]
 
-        # FADE: muchas repeticiones (cada consulta es barata)
+        # FADE: many repeats (each query is cheap)
         rep_fade = 40
-        it = iter([])
-        def q_fade_pt():
-            a, b = ventanas[q_fade_pt.i % len(ventanas)]; q_fade_pt.i += 1
-            arbol.peor_tramo(a, b)
-        q_fade_pt.i = 0
-        t_pt_fade = cronometrar(q_fade_pt, rep_fade * len(ventanas)) * 1e6
+        def q_fade_ws():
+            a, b = windows[q_fade_ws.i % len(windows)]; q_fade_ws.i += 1
+            tree.worst_stretch(a, b)
+        q_fade_ws.i = 0
+        t_ws_fade = time_per_call(q_fade_ws, rep_fade * len(windows)) * 1e6
 
         def q_fade_ag():
-            a, b = ventanas[q_fade_ag.i % len(ventanas)]; q_fade_ag.i += 1
-            arbol.agregado(a, b, "suma")
+            a, b = windows[q_fade_ag.i % len(windows)]; q_fade_ag.i += 1
+            tree.aggregate(a, b, "sum")
         q_fade_ag.i = 0
-        t_ag_fade = cronometrar(q_fade_ag, rep_fade * len(ventanas)) * 1e6
+        t_ag_fade = time_per_call(q_fade_ag, rep_fade * len(windows)) * 1e6
 
         def q_fade_sel():
             k = ks[q_fade_sel.i % len(ks)]; q_fade_sel.i += 1
-            arbol.select(k)
+            tree.select(k)
         q_fade_sel.i = 0
-        t_sel_fade = cronometrar(q_fade_sel, rep_fade * len(ks)) * 1e6
+        t_sel_fade = time_per_call(q_fade_sel, rep_fade * len(ks)) * 1e6
 
-        # Baseline lineal: menos repeticiones (cada consulta es cara)
+        # Linear baseline: fewer repeats (each query is expensive)
         rep_base = max(1, min(20, 2_000_000 // n))
-        def q_base_pt():
-            a, b = ventanas[q_base_pt.i % len(ventanas)]; q_base_pt.i += 1
-            base.peor_tramo(a, b)
-        q_base_pt.i = 0
-        t_pt_base = cronometrar(q_base_pt, rep_base * len(ventanas)) * 1e6
+        def q_base_ws():
+            a, b = windows[q_base_ws.i % len(windows)]; q_base_ws.i += 1
+            base.worst_stretch(a, b)
+        q_base_ws.i = 0
+        t_ws_base = time_per_call(q_base_ws, rep_base * len(windows)) * 1e6
 
         def q_base_ag():
-            a, b = ventanas[q_base_ag.i % len(ventanas)]; q_base_ag.i += 1
-            base.agregado_suma(a, b)
+            a, b = windows[q_base_ag.i % len(windows)]; q_base_ag.i += 1
+            base.aggregate_sum(a, b)
         q_base_ag.i = 0
-        t_ag_base = cronometrar(q_base_ag, rep_base * len(ventanas)) * 1e6
+        t_ag_base = time_per_call(q_base_ag, rep_base * len(windows)) * 1e6
 
-        filas.append(dict(n=n, h=h, cota=cota,
-                          ins_fade=t_ins_fade, ins_base=t_ins_base,
-                          pt_fade=t_pt_fade, pt_base=t_pt_base,
-                          ag_fade=t_ag_fade, ag_base=t_ag_base,
-                          sel_fade=t_sel_fade,
-                          speedup_pt=t_pt_base / t_pt_fade))
+        rows.append(dict(n=n, h=h, bound=bound,
+                         ins_fade=t_ins_fade, ins_base=t_ins_base,
+                         ws_fade=t_ws_fade, ws_base=t_ws_base,
+                         ag_fade=t_ag_fade, ag_base=t_ag_base,
+                         sel_fade=t_sel_fade,
+                         speedup_ws=t_ws_base / t_ws_fade))
 
-    # ---- imprimir tabla ----
-    print(f"\n{'n':>8} | {'altura':>6} {'cota':>6} | "
-          f"{'PeorTramo us (FADE/base)':>26} | {'Agregado us (FADE/base)':>24} | "
-          f"{'Sel us':>7} | {'x mas rapido':>11}")
-    print("-" * 110)
-    for f in filas:
-        print(f"{f['n']:>8} | {f['h']:>6} {f['cota']:>6.1f} | "
-              f"{f['pt_fade']:>11.2f} / {f['pt_base']:>11.2f} | "
-              f"{f['ag_fade']:>10.2f} / {f['ag_base']:>10.2f} | "
-              f"{f['sel_fade']:>7.2f} | {f['speedup_pt']:>10.1f}x")
-    print("\nInsercion (us/evento):")
-    for f in filas:
+    # ---- print table ----
+    print(f"\n{'n':>8} | {'height':>6} {'bound':>6} | "
+          f"{'WorstStretch us (FADE/base)':>28} | {'Aggregate us (FADE/base)':>25} | "
+          f"{'Sel us':>7} | {'x faster':>9}")
+    print("-" * 112)
+    for f in rows:
+        print(f"{f['n']:>8} | {f['h']:>6} {f['bound']:>6.1f} | "
+              f"{f['ws_fade']:>12.2f} / {f['ws_base']:>12.2f} | "
+              f"{f['ag_fade']:>11.2f} / {f['ag_base']:>10.2f} | "
+              f"{f['sel_fade']:>7.2f} | {f['speedup_ws']:>8.1f}x")
+    print("\nInsertion (us/event):")
+    for f in rows:
         print(f"   n={f['n']:>7}:  FADE {f['ins_fade']:.3f}   "
-              f"base(lineal) {f['ins_base']:.3f}")
-    return filas
+              f"linear baseline {f['ins_base']:.3f}")
+    return rows
 
 
-def guardar_plot(filas, ruta="benchmark_plot.png"):
+def save_plot(rows, path="benchmark_plot.png"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    ns = [f["n"] for f in filas]
-    pt_fade = [f["pt_fade"] for f in filas]
-    pt_base = [f["pt_base"] for f in filas]
+    ns = [f["n"] for f in rows]
+    ws_fade = [f["ws_fade"] for f in rows]
+    ws_base = [f["ws_base"] for f in rows]
 
     fig, ax = plt.subplots(figsize=(6.6, 4.0))
-    ax.plot(ns, pt_fade, "o-", color="#1F4E79", lw=2, label="FADE  ·  O(log n)")
-    ax.plot(ns, pt_base, "s--", color="#C55A11", lw=2, label="Linea base lineal (tipo RAP)  ·  O(n)")
+    ax.plot(ns, ws_fade, "o-", color="#1F4E79", lw=2, label="FADE  (O(log n))")
+    ax.plot(ns, ws_base, "s--", color="#C55A11", lw=2, label="Linear baseline (RAP-style)  (O(n))")
     ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel("Numero de eventos  n")
-    ax.set_ylabel("Tiempo por consulta PeorTramo (us)")
-    ax.set_title("Autoevaluacion: escalabilidad de la consulta PeorTramo")
+    ax.set_xlabel("Number of events  n")
+    ax.set_ylabel("Time per WorstStretch query (us)")
+    ax.set_title("Self-evaluation: WorstStretch query scalability")
     ax.grid(True, which="both", ls=":", alpha=0.5)
     ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
-    fig.savefig(ruta, dpi=200)
-    print(f"\n[grafico guardado en {ruta}]")
+    fig.savefig(path, dpi=200)
+    print(f"\n[plot written to {path}]")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--plot", action="store_true", help="guardar benchmark_plot.png")
+    ap.add_argument("--plot", action="store_true", help="write benchmark_plot.png")
     args = ap.parse_args()
 
     print("=" * 68)
-    print(" AUTOEVALUACION DEL FUNCIONAMIENTO DE FADE")
+    print(" FADE SELF-EVALUATION")
     print("=" * 68 + "\n")
-    autoevaluacion_correccion()
-    filas = autoevaluacion_rendimiento()
+    check_correctness()
+    rows = benchmark_performance()
     if args.plot:
-        guardar_plot(filas)
-    print("\nFin de la autoevaluacion.")
+        save_plot(rows)
+    print("\nDone.")
 
 
 if __name__ == "__main__":
